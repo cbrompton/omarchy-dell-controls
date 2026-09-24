@@ -3,7 +3,8 @@
 An [Omarchy](https://omarchy.org) shell bar widget that does on Linux what Dell Power Manager / My Dell do on Windows. Built for and tested on an XPS 15 9510; it should work on any Dell laptop that loads the kernel's `dell_laptop`, `dell_pc` and `dell_smm_hwmon` drivers.
 
 - **Battery:** charge level, health (full vs. design capacity), temperature, power draw, manufacture date, service tag, BIOS version
-- **Charging modes:** Standard, Adaptive, Custom (with start/stop thresholds), Fast, Trickle. These are stored in the BIOS, so they also apply in Windows
+- **Charging modes:** Standard, Adaptive, Custom, Fast, Trickle. These are stored in the BIOS, so they also apply in Windows
+- **Charge limit:** "Stop charging at" and "Start charging below" sliders (e.g. stop at 80% to reduce battery wear). They're always shown, and moving one switches the battery to Custom mode
 - **Thermal profile:** Cool, Quiet, Optimized, Ultra Performance (the BIOS thermal tables)
 - **Fans:** live RPM, and Auto / Medium / Max. Manual modes run a watchdog that hands control back to the BIOS if the CPU reaches 85°C
 - **CPU:** temperature, clock, energy-performance preference, Turbo on/off
