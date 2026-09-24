@@ -100,7 +100,11 @@ for d in /sys/bus/pci/devices/*; do
 done
 if [[ -n $gpu ]]; then
   emit gpu_present 1
-  emit gpu_name "$(lspci -s "${gpu##*/}" 2>/dev/null | sed -E 's/.*\[(GeForce[^]]*)\].*/\1/; s/.*: //')"
+  # Sysfs device IDs are cached; lspci reads PCI config space and wakes the dGPU.
+  case $(rd "$gpu/device") in
+    0x25a0) emit gpu_name "GeForce RTX 3050 Ti Mobile" ;;
+    *) emit gpu_name "NVIDIA" ;;
+  esac
   state=$(rd "$gpu/power/runtime_status")
   emit gpu_state "$state"
   # Querying nvidia-smi would wake a suspended GPU, so only ask when it is already up.
