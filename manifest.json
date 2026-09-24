@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "cbrompton.dell",
+  "name": "Dell",
+  "version": "1.0.0",
+  "author": "cbrompton",
+  "description": "Dell battery health, charge modes, thermal profiles, fans, CPU and GPU",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Dell",
+    "description": "Dell battery health, charging, thermals, fans and GPU",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

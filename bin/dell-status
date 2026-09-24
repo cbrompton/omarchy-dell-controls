@@ -1,0 +1,123 @@
+#!/bin/bash
+# Print Dell laptop state as "key<TAB>value" lines for the Dell panel.
+# Read-only: never needs root and never wakes a runtime-suspended dGPU.
+
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+rd() { [[ -r $1 ]] && cat "$1" 2>/dev/null; }
+
+hwmon_by_name() {
+  local h
+  for h in /sys/class/hwmon/hwmon*; do
+    [[ $(rd "$h/name") == "$1" ]] && { echo "$h"; return; }
+  done
+}
+
+# --- System ----------------------------------------------------------------
+emit model "$(rd /sys/class/dmi/id/product_name)"
+emit bios "$(rd /sys/class/dmi/id/bios_version)"
+# product_serial (the service tag) is root-only; the panel falls back to its
+# "serviceTag" setting when this is empty.
+emit service_tag "$(rd /sys/class/dmi/id/product_serial)"
+
+# --- Battery ---------------------------------------------------------------
+bat=/sys/class/power_supply/BAT0
+if [[ -d $bat ]]; then
+  full=$(rd $bat/charge_full); design=$(rd $bat/charge_full_design)
+  vmin=$(rd $bat/voltage_min_design)
+  [[ -z $full ]] && { full=$(rd $bat/energy_full); design=$(rd $bat/energy_full_design); vmin=""; }
+  if [[ -n $full && -n $design && $design -gt 0 ]]; then
+    emit health_pct "$(( full * 1000 / design ))"   # tenths of a percent
+    if [[ -n $vmin ]]; then
+      # charge (µAh) × voltage (µV) → Wh
+      emit full_wh "$(awk -v c="$full" -v v="$vmin" 'BEGIN{printf "%.1f", c*v/1e12}')"
+      emit design_wh "$(awk -v c="$design" -v v="$vmin" 'BEGIN{printf "%.1f", c*v/1e12}')"
+    else
+      emit full_wh "$(awk -v e="$full" 'BEGIN{printf "%.1f", e/1e6}')"
+      emit design_wh "$(awk -v e="$design" 'BEGIN{printf "%.1f", e/1e6}')"
+    fi
+  fi
+  emit capacity "$(rd $bat/capacity)"
+  emit status "$(rd $bat/status)"
+  emit health_state "$(rd $bat/health)"
+  emit cycles "$(rd $bat/cycle_count)"
+  t=$(rd $bat/temp); [[ -n $t ]] && emit bat_temp "$(( t / 10 ))"
+  y=$(rd $bat/manufacture_year); m=$(rd $bat/manufacture_month); d=$(rd $bat/manufacture_day)
+  [[ -n $y ]] && emit manufactured "$(printf '%04d-%02d-%02d' "$y" "$m" "$d")"
+  ct=$(rd $bat/charge_types)
+  emit charge_types "$(tr -d '[]' <<<"$ct")"
+  emit charge_type "$(grep -o '\[[^]]*\]' <<<"$ct" | tr -d '[]')"
+  emit charge_start "$(rd $bat/charge_control_start_threshold)"
+  emit charge_end "$(rd $bat/charge_control_end_threshold)"
+  p=$(rd $bat/power_now)
+  [[ -z $p ]] && { c=$(rd $bat/current_now); v=$(rd $bat/voltage_now); [[ -n $c && -n $v ]] && p=$(( c / 1000 * (v / 1000) )); }
+  [[ -n $p ]] && emit bat_watts "$(awk -v p="$p" 'BEGIN{printf "%.1f", p/1e6}')"
+fi
+
+# --- Thermal profile -------------------------------------------------------
+emit thermal "$(rd /sys/firmware/acpi/platform_profile)"
+emit thermal_choices "$(rd /sys/firmware/acpi/platform_profile_choices)"
+
+# --- Fans + temps ----------------------------------------------------------
+smm=$(hwmon_by_name dell_smm)
+ddv=$(hwmon_by_name dell_ddv)
+if [[ -n $smm ]]; then
+  for i in 1 2; do
+    [[ -r $smm/fan${i}_input ]] || continue
+    label=""
+    [[ -n $ddv ]] && label=$(rd "$ddv/fan${i}_label" | sed 's/ Fan.*//')
+    emit "fan${i}_label" "${label:-Fan $i}"
+    emit "fan${i}_rpm" "$(rd $smm/fan${i}_input)"
+    emit "fan${i}_max" "$(rd $smm/fan${i}_max)"
+  done
+  [[ -e $smm/pwm1_enable ]] && emit fan_control 1
+fi
+emit fan_mode "$(rd /run/dell-ctl/fan-mode || echo auto)"
+
+core=$(hwmon_by_name coretemp)
+[[ -n $core ]] && emit cpu_temp "$(( $(rd $core/temp1_input) / 1000 ))"
+if [[ -n $ddv ]]; then
+  for f in "$ddv"/temp*_label; do
+    case $(rd "$f") in
+      Video) emit gpu_temp_sensor "$(( $(rd "${f%_label}_input") / 1000 ))" ;;
+      SODIMM) emit ram_temp "$(( $(rd "${f%_label}_input") / 1000 ))" ;;
+    esac
+  done
+fi
+nv=$(hwmon_by_name nvme)
+[[ -n $nv ]] && emit ssd_temp "$(( $(rd $nv/temp1_input) / 1000 ))"
+
+# --- CPU -------------------------------------------------------------------
+emit cpu_epp "$(rd /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference)"
+nt=$(rd /sys/devices/system/cpu/intel_pstate/no_turbo)
+[[ -n $nt ]] && emit cpu_turbo "$(( 1 - nt ))"
+emit cpu_mhz "$(awk '{s+=$1; n++} END{if(n) printf "%d", s/n/1000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)"
+command -v powerprofilesctl >/dev/null && emit ppd_profile "$(powerprofilesctl get 2>/dev/null)"
+
+# --- NVIDIA dGPU -----------------------------------------------------------
+gpu=""
+for d in /sys/bus/pci/devices/*; do
+  [[ $(rd "$d/vendor") == 0x10de && $(rd "$d/class") == 0x03* ]] && { gpu=$d; break; }
+done
+if [[ -n $gpu ]]; then
+  emit gpu_present 1
+  emit gpu_name "$(lspci -s "${gpu##*/}" 2>/dev/null | sed -E 's/.*\[(GeForce[^]]*)\].*/\1/; s/.*: //')"
+  state=$(rd "$gpu/power/runtime_status")
+  emit gpu_state "$state"
+  # Querying nvidia-smi would wake a suspended GPU, so only ask when it is already up.
+  if [[ $state == active ]] && command -v nvidia-smi >/dev/null; then
+    IFS=',' read -r pw tmp ps util < <(nvidia-smi --query-gpu=power.draw,temperature.gpu,pstate,utilization.gpu \
+      --format=csv,noheader,nounits 2>/dev/null)
+    emit gpu_watts "$(xargs <<<"$pw")"
+    emit gpu_temp "$(xargs <<<"$tmp")"
+    emit gpu_pstate "$(xargs <<<"$ps")"
+    emit gpu_util "$(xargs <<<"$util")"
+  fi
+  # Processes holding the NVIDIA device nodes open keep it from suspending.
+  users=$(find /proc/[0-9]*/fd -maxdepth 1 -lname '/dev/nvidia*' 2>/dev/null | cut -d/ -f3 | sort -u \
+    | while read -r pid; do rd "/proc/$pid/comm"; done | sort -u | paste -sd ',' | sed 's/,/, /g')
+  emit gpu_users "$users"
+fi
+
+# --- Helper availability ---------------------------------------------------
+[[ -x /usr/local/libexec/dell-ctl-helper ]] && emit helper 1
+exit 0

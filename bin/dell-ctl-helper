@@ -1,0 +1,120 @@
+#!/bin/bash
+# Privileged half of the Dell panel. Installed root-owned to
+# /usr/local/libexec/dell-ctl-helper and run through pkexec. Every argument is
+# validated against a fixed whitelist or the values the kernel advertises —
+# nothing from the caller is ever used as a path or passed to a shell.
+set -euo pipefail
+
+BAT=/sys/class/power_supply/BAT0
+PROFILE=/sys/firmware/acpi/platform_profile
+STATE_DIR=/run/dell-ctl
+GUARD_UNIT=dell-fan-guard
+GUARD_TEMP_C=85
+
+die() { echo "dell-ctl: $*" >&2; exit 1; }
+
+in_list() { # value, space-separated list
+  local v
+  for v in $2; do [[ $v == "$1" ]] && return 0; done
+  return 1
+}
+
+hwmon_by_name() {
+  local h
+  for h in /sys/class/hwmon/hwmon*; do
+    [[ $(cat "$h/name" 2>/dev/null) == "$1" ]] && { echo "$h"; return; }
+  done
+}
+
+set_fan_state() { mkdir -p "$STATE_DIR"; echo "$1" > "$STATE_DIR/fan-mode"; }
+
+fans_auto() {
+  local smm; smm=$(hwmon_by_name dell_smm)
+  [[ -n $smm ]] || die "dell_smm_hwmon not loaded"
+  echo 2 > "$smm/pwm1_enable"
+  [[ -e $smm/pwm2_enable ]] && echo 2 > "$smm/pwm2_enable"
+  set_fan_state auto
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  charge-type)
+    [[ $# -eq 1 ]] || die "usage: charge-type <type>"
+    avail=$(tr -d '[]' < "$BAT/charge_types")
+    in_list "$1" "$avail" || die "unsupported charge type '$1' (have: $avail)"
+    echo "$1" > "$BAT/charge_types"
+    ;;
+
+  charge-thresholds)
+    [[ $# -eq 2 && $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || die "usage: charge-thresholds <start> <end>"
+    start=$1 end=$2
+    (( start >= 50 && start <= 95 )) || die "start must be 50–95"
+    (( end >= 55 && end <= 100 )) || die "end must be 55–100"
+    (( end - start >= 5 )) || die "end must be at least 5 above start"
+    # The firmware rejects a start above the current end (and vice versa), so
+    # write in whichever order keeps the pair valid at every step.
+    cur_end=$(cat "$BAT/charge_control_end_threshold")
+    if (( start >= cur_end )); then
+      echo "$end" > "$BAT/charge_control_end_threshold"
+      echo "$start" > "$BAT/charge_control_start_threshold"
+    else
+      echo "$start" > "$BAT/charge_control_start_threshold"
+      echo "$end" > "$BAT/charge_control_end_threshold"
+    fi
+    echo Custom > "$BAT/charge_types"
+    ;;
+
+  thermal)
+    [[ $# -eq 1 ]] || die "usage: thermal <profile>"
+    in_list "$1" "$(cat "$PROFILE"_choices)" || die "unsupported profile '$1'"
+    echo "$1" > "$PROFILE"
+    ;;
+
+  fan)
+    [[ $# -eq 1 ]] || die "usage: fan auto|medium|max"
+    smm=$(hwmon_by_name dell_smm)
+    [[ -n $smm && -e $smm/pwm1_enable ]] || die "fan control not available"
+    systemctl stop "$GUARD_UNIT" 2>/dev/null || true
+    case $1 in
+      auto) fans_auto; exit 0 ;;
+      medium) pwm=128 ;;
+      max) pwm=255 ;;
+      *) die "unknown fan mode '$1'" ;;
+    esac
+    for i in 1 2; do
+      [[ -e $smm/pwm$i ]] || continue
+      echo 1 > "$smm/pwm${i}_enable"
+      echo "$pwm" > "$smm/pwm$i"
+    done
+    set_fan_state "$1"
+    # Manual mode takes the BIOS out of the loop. Run a watchdog that hands
+    # control back if the CPU gets hot, so a forgotten setting can't cook it.
+    systemd-run --quiet --collect --unit="$GUARD_UNIT" "$0" fan-guard >/dev/null
+    ;;
+
+  fan-guard)
+    core=$(hwmon_by_name coretemp)
+    while [[ $(cat "$STATE_DIR/fan-mode" 2>/dev/null) != auto ]]; do
+      t=$(( $(cat "$core/temp1_input") / 1000 ))
+      if (( t >= GUARD_TEMP_C )); then
+        fans_auto
+        logger -t dell-ctl "CPU at ${t}°C — returned fans to BIOS control"
+        break
+      fi
+      sleep 2
+    done
+    ;;
+
+  turbo)
+    [[ $# -eq 1 ]] || die "usage: turbo on|off"
+    case $1 in
+      on) echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo ;;
+      off) echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo ;;
+      *) die "usage: turbo on|off" ;;
+    esac
+    ;;
+
+  *)
+    die "usage: charge-type|charge-thresholds|thermal|fan|turbo ..."
+    ;;
+esac
