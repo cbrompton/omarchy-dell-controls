@@ -11,8 +11,8 @@ import "Model.js" as Model
 // /usr/local/libexec/dell-ctl-helper via pkexec (see install.sh).
 Panel {
   id: root
-  moduleName: "cbrompton.dell"
-  ipcTarget: "cbrompton.dell"
+  moduleName: "dell-controls"
+  ipcTarget: "dell-controls"
   manageIpc: false
 
   readonly property string statusScript: Qt.resolvedUrl("bin/dell-status").toString().replace(/^file:\/\//, "")
@@ -56,7 +56,7 @@ Panel {
   }
 
   IpcHandler {
-    target: "cbrompton.dell"
+    target: "dell-controls"
 
     function open(): void { root.open() }
     function close(): void { root.close() }

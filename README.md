@@ -18,7 +18,7 @@ omarchy plugin add https://github.com/cbrompton/omarchy-dell-controls.git --enab
 The panel can display information right away. To let it change settings, install the root helper and polkit rule once:
 
 ```bash
-sudo ~/.config/omarchy/plugins/cbrompton.dell/install.sh
+sudo ~/.config/omarchy/plugins/dell-controls/install.sh
 ```
 
 This puts `dell-ctl-helper` in `/usr/local/libexec` (root-owned) and adds a polkit action that lets the active local user run it without a password. The helper only accepts a fixed set of commands and validates every value against what the kernel advertises. Remove both with `sudo ./install.sh --uninstall`. Re-run the installer after updating the plugin so the installed helper matches.
@@ -27,14 +27,14 @@ This puts `dell-ctl-helper` in `/usr/local/libexec` (root-owned) and adds a polk
 
 - **Left-click** the fan icon to open the panel
 - **Right-click** to show the CPU temperature next to the icon
-- `omarchy-shell cbrompton.dell toggle` to open it from a keybinding
+- `omarchy-shell dell-controls toggle` to open it from a keybinding
 
 ### Service tag
 
 Linux only lets root read the service tag. If the panel shows "—", add it to the widget's entry in `~/.config/omarchy/shell.json`:
 
 ```json
-{ "id": "cbrompton.dell", "serviceTag": "ABC1234" }
+{ "id": "dell-controls", "serviceTag": "ABC1234" }
 ```
 
 ## Notes
