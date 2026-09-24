@@ -50,6 +50,11 @@ Panel {
     actionProc.running = true
   }
 
+  function setChargeWindow(which, value) {
+    var w = Model.chargeWindow(root.chargeStart, root.chargeEnd, which, value)
+    root.run(["charge-thresholds", String(w.start), String(w.end)])
+  }
+
   function toggleTemp() {
     root.settings = Object.assign({}, root.settings, { showTemp: !root.showTemp })
     if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
@@ -271,28 +276,29 @@ Panel {
             onChanged: function(v) { if (v !== root.info.charge_type) root.run(["charge-type", v]) }
           }
 
+          // Always shown so the limit is easy to find; moving either slider
+          // switches the firmware to Custom (the helper does that).
           Column {
             width: parent.width
             spacing: Style.space(4)
-            visible: root.info.charge_type === "Custom"
+            visible: root.info.charge_end !== undefined && root.info.charge_end !== ""
 
+            InfoLabel {
+              width: parent.width
+              wrapMode: Text.Wrap
+              text: Model.chargeLimitSummary(root.info)
+            }
             ThresholdSlider {
               label: "Start charging below"
               minimum: 50; maximum: 95
               value: root.chargeStart
-              onCommit: function(v) {
-                var end = Math.max(root.chargeEnd, v + 5)
-                root.run(["charge-thresholds", String(v), String(end)])
-              }
+              onCommit: function(v) { root.setChargeWindow("start", v) }
             }
             ThresholdSlider {
               label: "Stop charging at"
               minimum: 55; maximum: 100
               value: root.chargeEnd
-              onCommit: function(v) {
-                var start = Math.min(root.chargeStart, v - 5)
-                root.run(["charge-thresholds", String(start), String(v)])
-              }
+              onCommit: function(v) { root.setChargeWindow("end", v) }
             }
           }
         }

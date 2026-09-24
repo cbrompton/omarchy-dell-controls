@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dell-controls",
   "name": "Dell",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "cbrompton",
   "description": "Dell battery health, charge modes, thermal profiles, fans, CPU and GPU",
   "kinds": [

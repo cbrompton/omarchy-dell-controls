@@ -79,6 +79,18 @@ function fanSummary(info) {
   return parts.length ? parts.join(" / ") + " RPM" : ""
 }
 
+// Dell firmware accepts start 50–95 and end 55–100 in steps of 5, with end at
+// least 5 above start. Moving one slider nudges the other to keep that true.
+function chargeWindow(start, end, which, value) {
+  if (which === "start") return { start: value, end: Math.max(end, value + 5) }
+  return { start: Math.min(start, value - 5), end: value }
+}
+
+function chargeLimitSummary(info) {
+  if (info.charge_type !== "Custom" || !info.charge_end) return "No charge limit in " + (info.charge_type || "this") + " mode — set one below"
+  return "Charges to " + info.charge_end + "%, resumes below " + info.charge_start + "%"
+}
+
 function gpuStateLabel(state) {
   if (state === "suspended") return "Asleep"
   if (state === "active") return "Awake"
@@ -94,6 +106,8 @@ if (typeof module !== "undefined") {
     thermalOptions: thermalOptions,
     fanOptions: fanOptions,
     fanSummary: fanSummary,
+    chargeWindow: chargeWindow,
+    chargeLimitSummary: chargeLimitSummary,
     gpuStateLabel: gpuStateLabel
   }
 }
